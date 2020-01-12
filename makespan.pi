@@ -1,0 +1,126 @@
+% The type of the solver
+import sat.
+
+% The main funtion which is stating the system
+start =>
+    
+    Grid = {{1,2,3,4},{5,6,7,8},{9,10,11,12}},
+    Initial_agents_positions = [(3),(10),(12)],
+    create_nodes_relations(Grid),
+    % Nodes store the number of nodes in the grid (not include walls)
+    Nodes = max([max(Row) : Row in Grid]), 
+    path(Nodes, to_array(Initial_agents_positions)).
+	
+	
+% The function create map of adjacency relations between nodes named neibs,
+% and map of indexes of nodes in the grid named row_col
+create_nodes_relations(Grid) =>
+    
+    RowColRel = [],
+    Rel = [],
+    foreach (R in 1..len(Grid), C in 1..len(Grid[1]), Grid[R,C] !== 0)
+        Neibs = [Grid[R1,C1] :  (R1,C1) in [(R,C),(R,C+1),(R,C-1),(R-1,C),(R+1,C)], 
+                             R1 >=1, R1 =< len(Grid), C1 >= 1, C1 =< len(Grid[1]),
+                             Grid[R1,C1] !== 0],
+        Rel := [$neibs(Grid[R,C],Neibs)|Rel],
+        RowColRel := [$row_col(Grid[R,C],R,C)|RowColRel]
+    end,
+    cl_facts(Rel,[$neibs(+,-)]),
+    cl_facts(RowColRel,[$row_col(+,-,-)]).
+	
+    
+path(Nodes, Initial_agents_positions) => 
+	
+    % Agents store the number of agents
+    Agents = len(Initial_agents_positions), 
+	calc_Makespan_Bounds(LB, UB, Initial_agents_positions, Agents, Nodes),
+	Delta = 0,
+    % If the solver did not find solution, the delta increase. 
+    % The delta affect the makespan which is in the rang of it's lower to upper bound.
+	while(not(path_to_solver(Agents, Nodes, Initial_agents_positions, LB, UB, Delta)))
+		Delta := Delta + 1
+	end.
+
+path_to_solver(Agents, Nodes, Initial_agents_positions, LB, UB, Delta) =>
+
+	% Plus one is for starting time from one and no from zero.
+    Makespan = LB + Delta + 1,
+    % 3D array which store for each agent at any time his place. named P for path. 
+    P = new_array(Makespan, Agents, Nodes), 
+	P :: 0..1, % 1 for being at place, 0 for not being
+	
+    % Init the initial places of the agents at time = 1
+	foreach(A in 1..Agents)    
+        (V) = Initial_agents_positions[A],
+        P[1,A,V] = 1
+	end,
+	
+    % Set constratins for the solver:
+    
+	% Each agent occupies exactly one vertex at each time.
+    foreach (T in 1..Makespan, A in 1..Agents)
+        sum([P[T,A,V] : V in 1..Nodes]) #= 1
+    end,
+	
+	% Every transition is valid
+    foreach(T in 1..Makespan-1, A in 1..Agents, V in 1..Nodes) 
+        neibs(V,Neibs),
+        P[T,A,V] #=> sum([P[T+1,A,U] : U in Neibs]) #>= 1
+    end,
+	
+    % At end time ( = makespan) all agents occipies one same node which is the meeting point
+	Num_of_agents_in_nodes = new_array(Nodes),
+	Num_of_agents_in_nodes :: [0, Agents],
+	
+	foreach(V in 1..Nodes)
+		Num_of_agents_in_nodes[V] #= sum([(P[Makespan,A,V] #= 1): A in 1..Agents])
+	end,
+	
+    sum([Num_of_agents_in_nodes[V] #= Agents : V in 1..Nodes]) #= 1,
+	
+    % Current makespan is alwasy smaller or equal to the upper bound
+    Makespan #<= UB,
+	
+    % Send array P to be solved by the solver
+	solve((P)),
+    
+    % Print the current makespan and the path each agent went through till the meeting point if the solver return a solution
+    printf("Makespan Value: %w\n", Makespan-1), 
+    printf("The path each agent walked till the optimal meeting point:"), 
+	% writeln(P),
+	foreach(T in 1..Makespan)
+		printf("\n"),
+		foreach(A in 1..Agents)
+			foreach(V in 1..Nodes)
+				if P[T,A,V] == 1 then
+					printf("[%d]",V)
+				end				
+			end
+		end
+	end.
+				
+	
+% the function calculate heuristic upper and lower bounds for the makespan	
+calc_Makespan_Bounds(LB, UB, Initial_agents_positions, Agents, Nodes) =>
+	
+    Sum = 0,
+	foreach(A in 1..Agents)
+		foreach(B in A+1..Agents)
+			manhattan_dist((Initial_agents_positions[A],Initial_agents_positions[B]),Cost),
+			Sum := Sum + Cost
+		end
+	end,
+	UB = floor(Sum/(Agents-1)), %Upper bound of makespan
+	LB = ceiling(UB/Nodes). %lower bound of makespan
+	
+
+
+% Manhattan distance - we use it to caclculte heuristic upper and lower bounds for the makespan
+manhattan_dist((U,V),Cost) =>
+    
+    row_col(U,URow,UCol),
+    row_col(V,VRow,VCol),
+    Cost = abs(URow-VRow)+abs(UCol-VCol).
+	
+
+	
